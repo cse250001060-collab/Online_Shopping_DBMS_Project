@@ -51,7 +51,7 @@ def arrange_pickup_and_refund(cart_id, serial_no, return_cart_id, delivery_perso
         db.require(cur, "SELECT delivery_person_id FROM Delivery_Person WHERE delivery_person_id = %s",
                    (delivery_person_id,), "Delivery person")
         line = db.require(
-            cur, "SELECT subtotal FROM Order_Cart WHERE cart_id = %s AND serial_no = %s",
+            cur, "SELECT product_id, quantity, subtotal FROM Order_Cart WHERE cart_id = %s AND serial_no = %s",
             (cart_id, serial_no), "Order item")
         refund = line["subtotal"] if refund_amount is None else refund_amount
 
@@ -65,4 +65,36 @@ def arrange_pickup_and_refund(cart_id, serial_no, return_cart_id, delivery_perso
             "WHERE cart_id = %s AND serial_no = %s AND return_cart_id = %s",
             (refund, cart_id, serial_no, return_cart_id),
         )
+
+        cur.execute("SELECT location_id, capacity FROM Inventory_Location ORDER BY location_id FOR UPDATE")
+        locations = cur.fetchall()
+        remaining = line["quantity"]
+        for location in locations:
+            location_id = location["location_id"]
+            cur.execute(
+                "SELECT product_id, stock_level FROM Product_Inventory WHERE location_id = %s FOR UPDATE",
+                (location_id,),
+            )
+            stock = {row["product_id"]: row["stock_level"] for row in cur.fetchall()}
+            quantity = min(remaining, location["capacity"] - sum(stock.values()))
+            if quantity <= 0:
+                continue
+
+            product_id = line["product_id"]
+            if product_id in stock:
+                cur.execute(
+                    "UPDATE Product_Inventory SET stock_level = stock_level + %s "
+                    "WHERE product_id = %s AND location_id = %s",
+                    (quantity, product_id, location_id),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO Product_Inventory (product_id, location_id, stock_level) VALUES (%s, %s, %s)",
+                    (product_id, location_id, quantity),
+                )
+            remaining -= quantity
+            if remaining == 0:
+                break
+        if remaining > 0:
+            raise BusinessRuleError("Not enough warehouse space for the returned items")
         return _fetch_return(cur, cart_id, serial_no, return_cart_id)

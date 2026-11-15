@@ -100,9 +100,11 @@ def test_review_then_pickup_and_full_refund():
         returns.review_return(cid, 1, ret["return_cart_id"], False)
     with pytest.raises(BusinessRuleError, match="at most the value"):
         returns.arrange_pickup_and_refund(cid, 1, ret["return_cart_id"], 2, refund_amount=5000)
+    stock_before = raw_read("SELECT stock_quantity FROM Product WHERE product_id = 1")[0]["stock_quantity"]
     done = returns.arrange_pickup_and_refund(cid, 1, ret["return_cart_id"], 2)
     assert done["return_status"] == "Refunded" and done["delivery_person_id"] == 2
     assert done["refund_amount"] == Decimal("998.00")
+    assert raw_read("SELECT stock_quantity FROM Product WHERE product_id = 1")[0]["stock_quantity"] == stock_before + 2
     with pytest.raises(BusinessRuleError, match="closed"):
         raw_write("UPDATE Return_Cart SET reason = 'Damaged item' WHERE cart_id = %s", (cid,))
 

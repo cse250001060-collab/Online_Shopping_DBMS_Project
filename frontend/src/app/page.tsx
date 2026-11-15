@@ -797,7 +797,10 @@ export default function App() {
             subtotal: Number(item.subtotal)
           }));
           setOrderCart((prev) => [
-            ...prev.filter((r) => !(r.customer_id === Number(custId) && r.order_id === null)),
+            ...prev.filter((r) =>
+              !(r.customer_id === Number(custId) && r.order_id === null) &&
+              !openItems.some((item) => item.cart_id === r.cart_id && item.serial_no === r.serial_no)
+            ),
             ...openItems
           ]);
         }
@@ -1040,7 +1043,11 @@ export default function App() {
         };
 
         setOrderCart((prev) => [
-          ...prev.filter((r) => !(r.customer_id === activeCustomerId && r.order_id === null)),
+          ...prev.filter((r) =>
+            r.order_id !== normalizedOrder.order_id &&
+            !(r.customer_id === activeCustomerId && r.order_id === null) &&
+            !snapshotLines.some((line) => line.cart_id === r.cart_id && line.serial_no === r.serial_no)
+          ),
           ...snapshotLines.map((l) => ({ ...l, order_id: normalizedOrder.order_id }))
         ]);
         setOrders((prev) => [normalizedOrder, ...prev.filter((o) => o.order_id !== normalizedOrder.order_id)]);
@@ -1509,12 +1516,38 @@ export default function App() {
               : r
           )
         );
+        await syncFromFastApi(activeCustomerId);
         notify('success', 'Refund Completed (FastAPI)', `Refunded ₹${updatedRet.refund_amount} via Courier #${driverId}.`);
         return;
       } catch (err) {
         notify('error', 'Refund Rejected', err.message);
         return;
       }
+    }
+
+    const request = returns.find((r) =>
+      r.cart_id === cartId && r.serial_no === serialNo && r.return_cart_id === retId
+    );
+    if (!line || request?.return_status !== 'Approved') return;
+
+    const nextInventory = productInventory.map((row) => ({ ...row }));
+    let remaining = line.quantity;
+    for (const location of [...locations].sort((a, b) => a.location_id - b.location_id)) {
+      const used = nextInventory.filter((r) => r.location_id === location.location_id)
+        .reduce((total, r) => total + r.stock_level, 0);
+      const quantity = Math.min(remaining, location.capacity - used);
+      if (quantity <= 0) continue;
+      const row = nextInventory.find((r) =>
+        r.location_id === location.location_id && r.product_id === line.product_id
+      );
+      if (row) row.stock_level += quantity;
+      else nextInventory.push({ product_id: line.product_id, location_id: location.location_id, stock_level: quantity });
+      remaining -= quantity;
+      if (remaining === 0) break;
+    }
+    if (remaining > 0) {
+      notify('error', 'Refund Rejected', 'Not enough warehouse space for the returned items.');
+      return;
     }
 
     setReturns((prev) =>
@@ -1524,6 +1557,12 @@ export default function App() {
           : r
       )
     );
+    setProductInventory(nextInventory);
+    setProducts((prev) => prev.map((product) =>
+      product.product_id === line.product_id
+        ? { ...product, stock_quantity: product.stock_quantity + line.quantity }
+        : product
+    ));
     notify('success', 'Pickup Assigned & Refund Issued', `₹${refundAmt || 0} refunded to customer.`);
   };
 
