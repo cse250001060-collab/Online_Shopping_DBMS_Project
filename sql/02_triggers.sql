@@ -200,7 +200,7 @@ BEGIN
         IF NOT (NEW.order_id <=> OLD.order_id) OR NEW.quantity <> OLD.quantity THEN
             SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Items on a placed order cannot be changed';
         END IF;
-    ELSEIF NEW.order_id IS NOT NULL THEN
+    ELSE IF NEW.order_id IS NOT NULL THEN
         SELECT customer_id INTO v_owner 
         FROM Orders 
         WHERE order_id = NEW.order_id;
@@ -250,7 +250,6 @@ BEGIN
             SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_msg;
         END IF;
 
-        -- Count the units offered by warehouses ahead of each warehouse.
         UPDATE Product_Inventory AS inventory
         JOIN (
             SELECT current_stock.location_id, COALESCE(SUM(earlier.stock_level), 0) AS stock_ahead
@@ -320,7 +319,7 @@ BEGIN
                 SET MESSAGE_TEXT = 'A delivery date is required when assigning a delivery person';
         END IF;
         SET NEW.delivery_status = 'Assigned';
-    ELSEIF NOT (NEW.delivery_person_id <=> OLD.delivery_person_id) THEN
+    ELSE IF NOT (NEW.delivery_person_id <=> OLD.delivery_person_id) THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'A delivery person is already assigned to this order';
     END IF;
@@ -339,7 +338,7 @@ BEGIN
         END IF;
         IF NEW.delivery_status = 'Picked Up' THEN
             SET NEW.order_status = 'Shipped';
-        ELSEIF NEW.delivery_status = 'Delivered' THEN
+        ELSE IF NEW.delivery_status = 'Delivered' THEN
             SET NEW.order_status = 'Delivered';
             SET NEW.delivery_date = CURDATE();
         END IF;
@@ -534,7 +533,7 @@ BEGIN
         IF OLD.return_status = 'Requested' AND NEW.return_status NOT IN ('Approved', 'Rejected') THEN
             SIGNAL SQLSTATE '45000'
                 SET MESSAGE_TEXT = 'A requested return can only be approved or rejected';
-        ELSEIF OLD.return_status = 'Approved' AND NEW.return_status <> 'Refunded' THEN
+        ELSE IF OLD.return_status = 'Approved' AND NEW.return_status <> 'Refunded' THEN
             SIGNAL SQLSTATE '45000'
                 SET MESSAGE_TEXT = 'An approved return can only move on to refunded';
         END IF;
