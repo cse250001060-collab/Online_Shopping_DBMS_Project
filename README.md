@@ -46,7 +46,7 @@ The API docs are available at `http://127.0.0.1:8000/docs`. The default CORS ori
 
 ## What the triggers decide
 
-Python never computes these, so nobody can get them wrong from the application side: `serial_no`, `unit_price` (copied from the product at the moment it's added), `subtotal`, `Orders.total_amount`, invoice total and 18% tax, the payment amount, `feedback_id`, `return_cart_id`, and the product's `stock_quantity` (always the sum of its warehouse rows).
+Python never computes these, so nobody can get them wrong from the application side: `serial_no`, `unit_price` (kept in sync with the product price until checkout), `subtotal`, `Orders.total_amount`, invoice total and 18% tax, the payment amount, `feedback_id`, `return_cart_id`, and the product's `stock_quantity` (always the sum of its warehouse rows).
 
 They also refuse anything out of order: editing a placed item, paying twice, assigning delivery before payment, skipping a delivery step, feedback before delivery, returns outside the 10 day window or with an unlisted reason, refunds above the item's value, and warehouses filled past capacity.
 
