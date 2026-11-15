@@ -32,10 +32,30 @@ def test_add_to_cart_sets_serial_price_and_subtotal():
     assert other["cart_id"] == 2 and other["serial_no"] == 1
 
 
-def test_unit_price_is_a_snapshot():
-    cart.add_to_cart(1, 1, 1)
+def test_price_changes_update_open_cart_lines_only():
+    placed = cart.add_to_cart(1, 1, 1)
+    order = orders.checkout(1)
+    open_line = cart.add_to_cart(2, 1, 2)
+    cart.add_to_cart(2, 2, 1)
+    other_price = cart.view_cart(2)["items"][1]["unit_price"]
+
     inventory.update_product(1, price=999)
-    assert cart.view_cart(1)["items"][0]["unit_price"] == Decimal("499.00")
+
+    items = cart.view_cart(2)["items"]
+    assert items[0]["unit_price"] == Decimal("999.00")
+    assert items[1]["unit_price"] == other_price
+    for line, expected_price, expected_subtotal in (
+        (placed, Decimal("499.00"), Decimal("499.00")),
+        (open_line, Decimal("999.00"), Decimal("1998.00")),
+    ):
+        stored = raw_read(
+            "SELECT unit_price, subtotal FROM Order_Cart WHERE cart_id = %s AND serial_no = %s",
+            (line["cart_id"], line["serial_no"]),
+        )[0]
+        assert stored == {"unit_price": expected_price, "subtotal": expected_subtotal}
+
+    assert raw_read("SELECT total_amount FROM Orders WHERE order_id = %s",
+                    (order["order_id"],))[0]["total_amount"] == Decimal("499.00")
 
 
 def test_add_rejects_more_than_available_stock():
