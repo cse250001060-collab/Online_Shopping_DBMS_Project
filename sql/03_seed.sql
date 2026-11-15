@@ -3,9 +3,10 @@ USE shopping_dbms;
 INSERT INTO Customer (first_name, last_name, email, password_hash, street, city, state, pincode, dob) VALUES
 ('Raunak', 'Singh', 'raunak@example.com', 'hash1', '12 MG Road', 'Indore', 'MP', '452001', '2004-05-14'),
 ('Mayank', 'Khoria', 'mayank@example.com', 'hash2', '8 Vijay Nagar', 'Indore', 'MP', '452010', '2004-08-02'),
-('Sarthak', 'Pandey', 'sarthak@example.com', 'hash3', '3 Palasia', 'Indore', 'MP', '452001', '2003-11-21');
+('Sarthak', 'Pandey', 'sarthak@example.com', 'hash3', '3 Palasia', 'Indore', 'MP', '452001', '2003-11-21'),
+('Sufiyan', 'Ahmad', 'sufiyan@example.com', 'hash4', 'IIT Indore, Simrol', 'Indore', 'MP', '453552', '2005-08-10');
 
-INSERT INTO Customer_Phone (customer_id, phone_no) VALUES (1, '9000000001'), (2, '9000000002');
+INSERT INTO Customer_Phone (customer_id, phone_no) VALUES (1, '9000000001'), (2, '9000000002'), (4, '9000000004');
 
 INSERT INTO Product_Category (category_name, description) VALUES
 ('Electronics', 'Phones, laptops and accessories'),
