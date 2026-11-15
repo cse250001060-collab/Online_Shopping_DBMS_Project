@@ -1,5 +1,7 @@
 import contextlib
+from dotenv import load_dotenv
 
+load_dotenv()
 import mysql.connector
 
 from .config import settings
