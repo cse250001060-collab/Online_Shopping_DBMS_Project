@@ -15,6 +15,15 @@ You need MySQL 8 (or MariaDB 10.5+) running locally.
 
 On macOS or Linux use `export` instead of `set`. `setup_db.py` drops and recreates the database, so don't point it at anything you care about. The tests use their own database, `shopping_dbms_test`, and never touch `shopping_dbms`.
 
+## FastAPI backend
+
+Install dependencies, make sure the project `.env` has the database connection settings, and start the API from the project root:
+
+    python -m pip install -r requirements.txt
+    python -m uvicorn main:app --reload
+
+The API docs are available at `http://127.0.0.1:8000/docs`. The default CORS origins are `http://localhost:3000` and `http://localhost:5173`; set `SHOP_CORS_ORIGINS` to a comma-separated list to change them. This API currently has no authentication, so keep it local until authentication and authorization are added.
+
 ## Where the 15 transactions live
 
 | # | Transaction | Function |
