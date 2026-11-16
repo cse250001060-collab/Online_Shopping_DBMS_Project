@@ -1774,7 +1774,7 @@ export default function App() {
           product_name: newProductForm.product_name.trim(),
           price: priceVal,
           description: newProductForm.description.trim() || 'Premium catalog item',
-          brand: newProductForm.brand.trim() || 'Indore Bazaar',
+          brand: newProductForm.brand.trim() || 'Simrol Bazaar',
           initial_stock: initStock,
           location_id: initStock > 0 ? lid : null
         });
