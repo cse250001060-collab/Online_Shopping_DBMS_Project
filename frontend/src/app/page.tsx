@@ -771,7 +771,7 @@ export default function App() {
   const fetchCustomerOrders = async (customerId) => {
     const rows = await apiRequest('GET', `/customers/${customerId}/orders`);
     const orderMap = new Map();
-    const itemRows = [];
+    const itemMap = new Map();
     const invoiceMap = new Map();
     const paymentMap = new Map();
     (Array.isArray(rows) ? rows : []).forEach((row) => {
@@ -788,7 +788,7 @@ export default function App() {
           total_amount: Number(row.total_amount)
         });
       }
-      if (row.cart_id != null) itemRows.push({
+      if (row.cart_id != null) itemMap.set(`${Number(row.cart_id)}-${Number(row.serial_no)}`, {
         cart_id: Number(row.cart_id), serial_no: Number(row.serial_no), order_id: orderId,
         customer_id: Number(row.customer_id), product_id: Number(row.product_id),
         quantity: Number(row.quantity), unit_price: Number(row.unit_price), subtotal: Number(row.subtotal)
@@ -808,8 +808,17 @@ export default function App() {
       });
     });
     const liveOrders = Array.from(orderMap.values());
-    setOrders((prev) => [...prev.filter((order) => order.customer_id !== Number(customerId)), ...liveOrders]);
-    setOrderCart((prev) => [...prev.filter((item) => item.customer_id !== Number(customerId) || item.order_id == null), ...itemRows]);
+    setOrders((prev) => [
+      ...prev.filter((order) => order.customer_id !== Number(customerId) && !orderMap.has(order.order_id)),
+      ...liveOrders
+    ]);
+    setOrderCart((prev) => [
+      ...prev.filter((item) =>
+        (item.customer_id !== Number(customerId) || item.order_id == null) &&
+        !itemMap.has(`${item.cart_id}-${item.serial_no}`)
+      ),
+      ...itemMap.values()
+    ]);
     setInvoices((prev) => [...prev.filter((invoice) => !liveOrders.some((order) => order.order_id === invoice.order_id)), ...invoiceMap.values()]);
     const invoiceIds = new Set(invoiceMap.keys());
     setPayments((prev) => [...prev.filter((payment) => !invoiceIds.has(payment.invoice_id)), ...paymentMap.values()]);
@@ -1424,9 +1433,13 @@ export default function App() {
           }
         );
         setFeedbacks((prev) => [
-          ...prev,
+          ...prev.filter((feedback) =>
+            feedback.order_id !== Number(fbRes.order_id) || feedback.feedback_id !== Number(fbRes.feedback_id)
+          ),
           {
             ...fbRes,
+            order_id: Number(fbRes.order_id),
+            feedback_id: Number(fbRes.feedback_id),
             feedback_date: String(fbRes.feedback_date).slice(0, 10)
           }
         ]);
