@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 from enum import Enum
 import os
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,6 +59,10 @@ class ReturnRequest(APIModel):
 
 class ReviewReturnRequest(APIModel):
     approve: bool
+
+
+class ReturnDeliveryAssignment(APIModel):
+    delivery_person_id: int = Field(gt=0)
 
 
 class CompleteReturnRequest(APIModel):
@@ -126,7 +131,10 @@ app.add_middleware(
     allow_origins=[
         origin.strip()
         for origin in os.getenv(
-            "SHOP_CORS_ORIGINS", "http://localhost:3000,http://localhost:5173"
+            "SHOP_CORS_ORIGINS",
+            "http://localhost:3000,http://127.0.0.1:3000,"
+            "http://localhost:3001,http://127.0.0.1:3001,"
+            "http://localhost:5173,http://127.0.0.1:5173",
         ).split(",")
         if origin.strip()
     ],
@@ -232,6 +240,16 @@ def checkout(customer_id: int):
 
 
 # Orders, invoices, payments
+@app.get("/orders")
+def list_orders():
+    return orders.list_orders()
+
+
+@app.get("/customers/{customer_id}/orders")
+def list_customer_orders(customer_id: int):
+    return orders.list_customer_order_details(customer_id)
+
+
 @app.get("/orders/{order_id}")
 def get_order(order_id: int):
     order = orders.get_order(order_id)
@@ -268,6 +286,22 @@ def submit_feedback(order_id: int, body: FeedbackRequest, customer_id: int = Que
 
 
 # Returns
+@app.get("/customers/{customer_id}/returns")
+def list_customer_returns(customer_id: int):
+    return returns.list_customer_returns(customer_id)
+
+
+@app.get("/returns")
+def list_returns(return_status: Literal["Requested", "Approved", "Rejected", "Refunded"] | None = None):
+    """List return records, optionally filtered by status (for example, Requested)."""
+    return returns.list_returns(return_status)
+
+
+@app.get("/manager/returns")
+def list_manager_returns():
+    return returns.list_manager_returns()
+
+
 @app.post("/customers/{customer_id}/cart/items/{cart_id}/{serial_no}/returns", status_code=status.HTTP_201_CREATED)
 def request_return(customer_id: int, cart_id: int, serial_no: int, body: ReturnRequest):
     return returns.request_return(customer_id, cart_id, serial_no, body.reason)
@@ -276,6 +310,15 @@ def request_return(customer_id: int, cart_id: int, serial_no: int, body: ReturnR
 @app.patch("/returns/{cart_id}/{serial_no}/{return_cart_id}/review")
 def review_return(cart_id: int, serial_no: int, return_cart_id: int, body: ReviewReturnRequest):
     return returns.review_return(cart_id, serial_no, return_cart_id, body.approve)
+
+
+@app.patch("/returns/{cart_id}/{serial_no}/{return_cart_id}/delivery-assignment")
+def assign_return_delivery_person(
+    cart_id: int, serial_no: int, return_cart_id: int, body: ReturnDeliveryAssignment
+):
+    return returns.assign_return_delivery_person(
+        cart_id, serial_no, return_cart_id, body.delivery_person_id
+    )
 
 
 @app.post("/returns/{cart_id}/{serial_no}/{return_cart_id}/pickup-and-refund")

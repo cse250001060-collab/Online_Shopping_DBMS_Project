@@ -2,6 +2,47 @@ from . import db
 from .errors import BusinessRuleError
 
 
+def list_returns(return_status=None):
+    sql = (
+        "SELECT rc.cart_id, rc.serial_no, rc.return_cart_id, p.product_name, rc.reason "
+        "FROM Return_Cart rc "
+        "JOIN Order_Cart oc ON oc.cart_id = rc.cart_id AND oc.serial_no = rc.serial_no "
+        "JOIN Product p ON p.product_id = oc.product_id"
+    )
+    params = ()
+    if return_status is not None:
+        sql += " WHERE rc.return_status = %s"
+        params = (return_status,)
+    sql += " ORDER BY rc.return_date DESC, rc.cart_id, rc.serial_no, rc.return_cart_id"
+    return db.fetch_all(sql, params)
+
+
+def list_customer_returns(customer_id):
+    return db.fetch_all(
+        "SELECT rc.cart_id, rc.serial_no, rc.return_cart_id, oc.order_id, "
+        "p.product_name, rc.reason, rc.return_status, rc.return_date, "
+        "rc.refund_amount, rc.delivery_person_id "
+        "FROM Return_Cart rc "
+        "JOIN Order_Cart oc ON oc.cart_id = rc.cart_id AND oc.serial_no = rc.serial_no "
+        "JOIN Product p ON p.product_id = oc.product_id "
+        "WHERE oc.customer_id = %s "
+        "ORDER BY rc.return_date DESC, rc.cart_id, rc.serial_no, rc.return_cart_id DESC",
+        (customer_id,),
+    )
+
+
+def list_manager_returns():
+    return db.fetch_all(
+        "SELECT rc.cart_id, rc.serial_no, rc.return_cart_id, p.product_name, "
+        "rc.reason, rc.return_status, rc.delivery_person_id "
+        "FROM Return_Cart rc "
+        "JOIN Order_Cart oc ON oc.cart_id = rc.cart_id AND oc.serial_no = rc.serial_no "
+        "JOIN Product p ON p.product_id = oc.product_id "
+        "WHERE rc.return_status IN ('Requested', 'Approved') "
+        "ORDER BY rc.return_date DESC, rc.cart_id, rc.serial_no, rc.return_cart_id"
+    )
+
+
 def _fetch_return(cur, cart_id, serial_no, return_cart_id, lock=False):
     sql = ("SELECT * FROM Return_Cart WHERE cart_id = %s AND serial_no = %s "
            "AND return_cart_id = %s")
@@ -41,6 +82,25 @@ def review_return(cart_id, serial_no, return_cart_id, approve):
         return _fetch_return(cur, cart_id, serial_no, return_cart_id)
 
 
+def assign_return_delivery_person(cart_id, serial_no, return_cart_id, delivery_person_id):
+    with db.transaction() as cur:
+        current = _fetch_return(cur, cart_id, serial_no, return_cart_id, lock=True)
+        if current["return_status"] != "Approved":
+            raise BusinessRuleError("Only an approved return can be assigned for pickup")
+        if current["delivery_person_id"] is not None:
+            raise BusinessRuleError("A delivery person is already assigned to this return")
+        db.require(
+            cur, "SELECT delivery_person_id FROM Delivery_Person WHERE delivery_person_id = %s",
+            (delivery_person_id,), "Delivery person",
+        )
+        cur.execute(
+            "UPDATE Return_Cart SET delivery_person_id = %s "
+            "WHERE cart_id = %s AND serial_no = %s AND return_cart_id = %s",
+            (delivery_person_id, cart_id, serial_no, return_cart_id),
+        )
+        return _fetch_return(cur, cart_id, serial_no, return_cart_id)
+
+
 def arrange_pickup_and_refund(cart_id, serial_no, return_cart_id, delivery_person_id,
                               refund_amount=None):
     with db.transaction() as cur:
@@ -48,6 +108,8 @@ def arrange_pickup_and_refund(cart_id, serial_no, return_cart_id, delivery_perso
         if current["return_status"] != "Approved":
             raise BusinessRuleError(
                 f"Only an approved return can be picked up and refunded (this one is {current['return_status']})")
+        if current["delivery_person_id"] is not None and current["delivery_person_id"] != delivery_person_id:
+            raise BusinessRuleError("Refund must use the delivery person assigned to this return")
         db.require(cur, "SELECT delivery_person_id FROM Delivery_Person WHERE delivery_person_id = %s",
                    (delivery_person_id,), "Delivery person")
         line = db.require(

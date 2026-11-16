@@ -13,6 +13,33 @@ def get_order(order_id):
     return db.fetch_one("SELECT * FROM Orders WHERE order_id = %s", (order_id,))
 
 
+def list_orders():
+    return db.fetch_all(
+        "SELECT o.*, i.payment_status FROM Orders o "
+        "LEFT JOIN Invoice_Bill i ON i.order_id = o.order_id "
+        "ORDER BY o.order_id DESC"
+    )
+
+
+def list_customer_order_details(customer_id):
+    return db.fetch_all(
+        "SELECT o.order_id, o.customer_id, o.delivery_person_id, o.order_date, "
+        "o.order_status, o.delivery_date, o.delivery_status, o.total_amount, "
+        "oc.cart_id, oc.serial_no, oc.product_id, oc.quantity, oc.unit_price, oc.subtotal, "
+        "i.invoice_id, i.invoice_date, i.total_amount AS invoice_total, i.tax_amount, "
+        "i.payment_status AS invoice_status, "
+        "p.payment_id, p.payment_date, p.payment_mode, p.amount AS payment_amount, "
+        "p.payment_status AS transaction_status "
+        "FROM Orders o "
+        "LEFT JOIN Order_Cart oc ON oc.order_id = o.order_id "
+        "LEFT JOIN Invoice_Bill i ON i.order_id = o.order_id "
+        "LEFT JOIN Payment p ON p.invoice_id = i.invoice_id "
+        "WHERE o.customer_id = %s "
+        "ORDER BY o.order_id DESC, oc.serial_no",
+        (customer_id,),
+    )
+
+
 def checkout(customer_id):
     with db.transaction() as cur:
         db.require(cur, "SELECT customer_id FROM Customer WHERE customer_id = %s",

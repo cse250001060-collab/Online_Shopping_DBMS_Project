@@ -22,7 +22,12 @@ Install dependencies, make sure the project `.env` has the database connection s
     python -m pip install -r requirements.txt
     python -m uvicorn main:app --reload
 
-The API docs are available at `http://127.0.0.1:8000/docs`. The default CORS origins are `http://localhost:3000` and `http://localhost:5173`; set `SHOP_CORS_ORIGINS` to a comma-separated list to change them. This API currently has no authentication, so keep it local until authentication and authorization are added.
+The API docs are available at `http://127.0.0.1:8000/docs`. The default CORS origins cover `localhost` and `127.0.0.1` on ports 3000, 3001, and 5173; set `SHOP_CORS_ORIGINS` to a comma-separated list to change them. This API currently has no authentication, so keep it local until authentication and authorization are added.
+
+The admin return queue is available at `GET /returns?return_status=Requested`. Omit `return_status` to list all return records, or filter by `Approved`, `Rejected`, or `Refunded`. Each result includes the composite return IDs needed by the review route.
+Customers can see their own return history with `GET /customers/{customer_id}/returns`; the frontend shows those records in **My Orders & Returns → My Return Cart**.
+The manager view loads all orders from `GET /orders`. Managers choose a delivery person before assigning an order, then advance its delivery status one step at a time. Customers can only view tracking and refresh it. For approved returns, managers choose a delivery person with `PATCH /returns/{cart_id}/{serial_no}/{return_cart_id}/delivery-assignment`, then issue the refund as a separate action. The manager queue uses `GET /manager/returns` so it can show assigned couriers while the compact `GET /returns` list keeps its five fields.
+Customer order history, including order lines, invoice payment status, and payment details, is available from `GET /customers/{customer_id}/orders`.
 
 ## Where the 15 transactions live
 

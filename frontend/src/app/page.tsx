@@ -564,6 +564,8 @@ export default function App() {
   const [locations, setLocations] = useState(INITIAL_LOCATIONS);
   const [productInventory, setProductInventory] = useState(INITIAL_PRODUCT_INVENTORY);
   const [deliveryPersons, setDeliveryPersons] = useState(INITIAL_DELIVERY_PERSONS);
+  const [selectedDriverByOrder, setSelectedDriverByOrder] = useState({});
+  const [selectedDriverByReturn, setSelectedDriverByReturn] = useState({});
 
   // Pre-seed 1 delivered order for Customer #1 so 'My Orders' looks rich immediately
   const [orderCart, setOrderCart] = useState([
@@ -636,6 +638,7 @@ export default function App() {
   ]);
 
   const [returns, setReturns] = useState([]);
+  const [customerReturns, setCustomerReturns] = useState([]);
 
   // Storefront Filters (Tx #1)
   const [searchQuery, setSearchQuery] = useState('');
@@ -724,6 +727,95 @@ export default function App() {
     return data;
   };
 
+  const fetchReturnQueue = async () => {
+    const rows = await apiRequest('GET', '/manager/returns');
+    const queue = (Array.isArray(rows) ? rows : []).map((row) => ({
+      ...row,
+      cart_id: Number(row.cart_id),
+      serial_no: Number(row.serial_no),
+      return_cart_id: Number(row.return_cart_id),
+      delivery_person_id: row.delivery_person_id == null ? null : Number(row.delivery_person_id)
+    }));
+    setReturns(queue);
+    return queue;
+  };
+
+  const fetchCustomerReturns = async (customerId) => {
+    const rows = await apiRequest('GET', `/customers/${customerId}/returns`);
+    const ownReturns = (Array.isArray(rows) ? rows : []).map((row) => ({
+      ...row,
+      cart_id: Number(row.cart_id),
+      serial_no: Number(row.serial_no),
+      return_cart_id: Number(row.return_cart_id),
+      refund_amount: Number(row.refund_amount || 0),
+      delivery_person_id: row.delivery_person_id == null ? null : Number(row.delivery_person_id)
+    }));
+    setCustomerReturns(ownReturns);
+    return ownReturns;
+  };
+
+  const fetchOrders = async () => {
+    const rows = await apiRequest('GET', '/orders');
+    const liveOrders = (Array.isArray(rows) ? rows : []).map((row) => ({
+      ...row,
+      order_id: Number(row.order_id),
+      customer_id: Number(row.customer_id),
+      delivery_person_id: row.delivery_person_id == null ? null : Number(row.delivery_person_id),
+      total_amount: Number(row.total_amount),
+      order_date: String(row.order_date).slice(0, 10)
+    }));
+    setOrders(liveOrders);
+    return liveOrders;
+  };
+
+  const fetchCustomerOrders = async (customerId) => {
+    const rows = await apiRequest('GET', `/customers/${customerId}/orders`);
+    const orderMap = new Map();
+    const itemRows = [];
+    const invoiceMap = new Map();
+    const paymentMap = new Map();
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      const orderId = Number(row.order_id);
+      if (!orderMap.has(orderId)) {
+        orderMap.set(orderId, {
+          order_id: orderId,
+          customer_id: Number(row.customer_id),
+          delivery_person_id: row.delivery_person_id == null ? null : Number(row.delivery_person_id),
+          order_date: String(row.order_date).slice(0, 10),
+          order_status: row.order_status,
+          delivery_date: row.delivery_date,
+          delivery_status: row.delivery_status,
+          total_amount: Number(row.total_amount)
+        });
+      }
+      if (row.cart_id != null) itemRows.push({
+        cart_id: Number(row.cart_id), serial_no: Number(row.serial_no), order_id: orderId,
+        customer_id: Number(row.customer_id), product_id: Number(row.product_id),
+        quantity: Number(row.quantity), unit_price: Number(row.unit_price), subtotal: Number(row.subtotal)
+      });
+      if (row.invoice_id != null && !invoiceMap.has(Number(row.invoice_id))) {
+        invoiceMap.set(Number(row.invoice_id), {
+          invoice_id: Number(row.invoice_id), order_id: orderId,
+          invoice_date: String(row.invoice_date).slice(0, 10),
+          total_amount: Number(row.invoice_total), tax_amount: Number(row.tax_amount),
+          payment_status: row.invoice_status
+        });
+      }
+      if (row.payment_id != null) paymentMap.set(Number(row.payment_id), {
+        payment_id: Number(row.payment_id), invoice_id: Number(row.invoice_id),
+        payment_date: row.payment_date, payment_mode: row.payment_mode,
+        amount: Number(row.payment_amount), payment_status: row.transaction_status
+      });
+    });
+    const liveOrders = Array.from(orderMap.values());
+    setOrders((prev) => [...prev.filter((order) => order.customer_id !== Number(customerId)), ...liveOrders]);
+    setOrderCart((prev) => [...prev.filter((item) => item.customer_id !== Number(customerId) || item.order_id == null), ...itemRows]);
+    setInvoices((prev) => [...prev.filter((invoice) => !liveOrders.some((order) => order.order_id === invoice.order_id)), ...invoiceMap.values()]);
+    const invoiceIds = new Set(invoiceMap.keys());
+    setPayments((prev) => [...prev.filter((payment) => !invoiceIds.has(payment.invoice_id)), ...paymentMap.values()]);
+    return liveOrders;
+  };
+
   // Sync Catalog, Categories, Locations, Warehouse Stock & Active Cart from FastAPI
   const syncFromFastApi = async (custId = activeCustomerId) => {
     try {
@@ -739,6 +831,9 @@ export default function App() {
         apiRequest('GET', '/locations'),
         apiRequest('GET', '/delivery-people')
       ]);
+      await fetchReturnQueue();
+      await fetchCustomerReturns(custId);
+      await fetchCustomerOrders(custId);
 
       const accents = ['orange', 'cyan', 'purple', 'pink', 'green'];
       if (Array.isArray(catsData) && catsData.length > 0) {
@@ -808,35 +903,6 @@ export default function App() {
         // Customer may not exist in DB yet if 03_seed.sql wasn't re-run with customer 4
       }
 
-      // Probe existing orders 1..12 via GET /orders/{order_id} so demo.py orders appear
-      const foundOrders = [];
-      for (let oid = 1; oid <= 10; oid++) {
-        try {
-          const ord = await fetch(`${cleanBase}/orders/${oid}`);
-          if (ord.ok) {
-            const oJson = await ord.json();
-            foundOrders.push({
-              ...oJson,
-              total_amount: Number(oJson.total_amount),
-              order_date: String(oJson.order_date).slice(0, 10)
-            });
-          } else {
-            break;
-          }
-        } catch {
-          break;
-        }
-      }
-      if (foundOrders.length > 0) {
-        setOrders((prev) => {
-          const byId = new Map(prev.map((o) => [o.order_id, o]));
-          foundOrders.forEach((fo) => {
-            const existing = byId.get(fo.order_id) || {};
-            byId.set(fo.order_id, { ...existing, ...fo });
-          });
-          return Array.from(byId.values());
-        });
-      }
     } catch {
       setApiStatus('standby');
     }
@@ -1286,7 +1352,7 @@ export default function App() {
     if (!ord) return;
 
     if (!ord.delivery_person_id) {
-      await handleAssignDriver(orderId, 1);
+      notify('error', 'Assign Courier First', 'Select and assign a courier before advancing delivery.');
       return;
     }
 
@@ -1412,10 +1478,12 @@ export default function App() {
           ...prev,
           {
             ...retRes,
+            product_name: returnModalItem.product_name,
             refund_amount: Number(retRes.refund_amount || 0),
             return_date: String(retRes.return_date).slice(0, 10)
           }
         ]);
+        await fetchCustomerReturns(activeCustomerId);
         setReturnModalItem(null);
         notify(
           'success',
@@ -1455,11 +1523,24 @@ export default function App() {
         refund_amount: 0
       }
     ]);
+    setCustomerReturns((prev) => [
+      {
+        cart_id,
+        serial_no,
+        return_cart_id: maxRetId + 1,
+        order_id: orderCart.find((line) => line.cart_id === cart_id && line.serial_no === serial_no)?.order_id,
+        product_name: returnModalItem.product_name,
+        reason: selectedReturnReason,
+        return_status: 'Requested',
+        refund_amount: 0
+      },
+      ...prev
+    ]);
     setReturnModalItem(null);
     notify('success', 'Return Requested', `Return request #${maxRetId + 1} submitted for review.`);
   };
 
-  // Tx #12 & #13: Admin Review Return & Pickup/Refund
+  // Tx #12 & #13: Admin Review Return, Assign Pickup Courier, and Refund
   // PATCH /returns/{cart_id}/{serial_no}/{return_cart_id}/review
   // POST /returns/{cart_id}/{serial_no}/{return_cart_id}/pickup-and-refund
   const handleReviewReturn = async (cartId, serialNo, retId, approve) => {
@@ -1477,6 +1558,7 @@ export default function App() {
               : r
           )
         );
+        await fetchCustomerReturns(activeCustomerId);
         notify('info', `Return ${updatedRet.return_status} (FastAPI)`, `Updated Return #${retId}.`);
         return;
       } catch (err) {
@@ -1492,10 +1574,49 @@ export default function App() {
           : r
       )
     );
+    setCustomerReturns((prev) => prev.map((r) =>
+      r.cart_id === cartId && r.serial_no === serialNo && r.return_cart_id === retId
+        ? { ...r, return_status: approve ? 'Approved' : 'Rejected' }
+        : r
+    ));
     notify('info', `Return ${approve ? 'Approved' : 'Rejected'}`, `Updated status for Return #${retId}.`);
   };
 
-  const handleCompleteRefund = async (cartId, serialNo, retId, driverId = 2) => {
+  const handleAssignReturnDriver = async (cartId, serialNo, retId, driverId) => {
+    if (!driverId) return;
+    if (useLiveApi && apiStatus === 'connected') {
+      try {
+        const updatedRet = await apiRequest(
+          'PATCH',
+          `/returns/${cartId}/${serialNo}/${retId}/delivery-assignment`,
+          { delivery_person_id: Number(driverId) }
+        );
+        setReturns((prev) => prev.map((ret) =>
+          ret.cart_id === cartId && ret.serial_no === serialNo && ret.return_cart_id === retId
+            ? { ...ret, delivery_person_id: Number(updatedRet.delivery_person_id) }
+            : ret
+        ));
+        await fetchCustomerReturns(activeCustomerId);
+        notify('success', 'Return Courier Assigned', `Courier #${driverId} will collect Return #${retId}.`);
+      } catch (err) {
+        notify('error', 'Return Assignment Blocked', err.message);
+      }
+      return;
+    }
+    setReturns((prev) => prev.map((ret) =>
+      ret.cart_id === cartId && ret.serial_no === serialNo && ret.return_cart_id === retId && ret.return_status === 'Approved'
+        ? { ...ret, delivery_person_id: Number(driverId) }
+        : ret
+    ));
+    setCustomerReturns((prev) => prev.map((ret) =>
+      ret.cart_id === cartId && ret.serial_no === serialNo && ret.return_cart_id === retId
+        ? { ...ret, delivery_person_id: Number(driverId) }
+        : ret
+    ));
+    notify('success', 'Return Courier Assigned', `Courier #${driverId} will collect Return #${retId}.`);
+  };
+
+  const handleCompleteRefund = async (cartId, serialNo, retId, driverId) => {
     const line = orderCart.find((l) => l.cart_id === cartId && l.serial_no === serialNo);
     const refundAmt = line ? line.subtotal : undefined;
 
@@ -1516,6 +1637,7 @@ export default function App() {
               : r
           )
         );
+        await fetchCustomerReturns(activeCustomerId);
         await syncFromFastApi(activeCustomerId);
         notify('success', 'Refund Completed (FastAPI)', `Refunded ₹${updatedRet.refund_amount} via Courier #${driverId}.`);
         return;
@@ -1557,6 +1679,11 @@ export default function App() {
           : r
       )
     );
+    setCustomerReturns((prev) => prev.map((r) =>
+      r.cart_id === cartId && r.serial_no === serialNo && r.return_cart_id === retId
+        ? { ...r, return_status: 'Refunded', refund_amount: refundAmt || 0 }
+        : r
+    ));
     setProductInventory(nextInventory);
     setProducts((prev) => prev.map((product) =>
       product.product_id === line.product_id
@@ -2228,6 +2355,32 @@ export default function App() {
                     Click any order pill to inspect tax invoice, track live delivery, rate order, or return an item
                   </p>
                 </div>
+                {useLiveApi && apiStatus === 'connected' && (
+                  <button
+                    onClick={() => fetchCustomerOrders(activeCustomerId).catch((err) => notify('error', 'Could Not Refresh Orders', err.message))}
+                    className="px-3 py-1.5 rounded-xl border border-[#7dcfff]/50 text-xs font-semibold text-[#7dcfff]"
+                  >Refresh Tracking</button>
+                )}
+              </div>
+
+              <div className="bg-[#24273a] px-5 py-4 rounded-3xl border border-[#bb9af7]/30 space-y-3">
+                <h3 className="text-sm font-bold text-white">My Return Cart</h3>
+                {customerReturns.length === 0 ? (
+                  <p className="text-xs text-slate-400">You have not filed any returns.</p>
+                ) : customerReturns.map((ret) => (
+                  <div key={`${ret.cart_id}-${ret.serial_no}-${ret.return_cart_id}`}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-[#1c1f2e] px-4 py-3 border border-white/10 text-xs">
+                    <div>
+                      <div className="font-semibold text-white">{ret.product_name || 'Item'} · Return #{ret.return_cart_id}</div>
+                      <div className="text-slate-400">Order #{ret.order_id || '—'} · Cart #{ret.cart_id} · Serial #{ret.serial_no} · {ret.reason}</div>
+                    </div>
+                    <span className="text-[#bb9af7] font-semibold">
+                      {ret.return_status}
+                      {ret.delivery_person_id && ` · Pickup: ${deliveryPersons.find((person) => person.delivery_person_id === ret.delivery_person_id)?.name || `Courier #${ret.delivery_person_id}`}`}
+                      {ret.refund_amount > 0 ? ` · ₹${ret.refund_amount} refunded` : ''}
+                    </span>
+                  </div>
+                ))}
               </div>
 
               {customerOrders.length === 0 ? (
@@ -2273,7 +2426,7 @@ export default function App() {
                       }
                     >
                       <div className="space-y-5 pt-2">
-                        {/* 1. 5-Step Delivery Progress Bar */}
+                        {/* 1. Read-only 5-Step Delivery Progress Bar */}
                         <div className="bg-[#23263a] p-4 rounded-2xl border border-white/10">
                           <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                             <div className="text-xs">
@@ -2294,18 +2447,7 @@ export default function App() {
                                 >
                                   Pay Invoice Now
                                 </button>
-                              ) : (
-                                ord.delivery_status !== 'Delivered' && (
-                                  <button
-                                    onClick={() => handleAdvanceDeliveryStep(ord.order_id)}
-                                    className="px-3 py-1 rounded-xl bg-[#7dcfff]/20 border border-[#7dcfff]/60 text-xs font-semibold text-[#7dcfff] hover:bg-[#7dcfff]/30 transition"
-                                  >
-                                    {ord.delivery_person_id
-                                      ? 'Advance Next Delivery Step →'
-                                      : 'Assign Courier & Dispatch →'}
-                                  </button>
-                                )
-                              )}
+                              ) : null}
                             </div>
                           </div>
 
@@ -2336,10 +2478,10 @@ export default function App() {
                           </div>
                           {lines.map((line) => {
                             const prod = products.find((p) => p.product_id === line.product_id);
-                            const itemReturns = returns.filter(
+                            const itemReturns = customerReturns.filter(
                               (r) => r.cart_id === line.cart_id && r.serial_no === line.serial_no
                             );
-                            const latestReturn = itemReturns[itemReturns.length - 1];
+                            const latestReturn = itemReturns.sort((a, b) => b.return_cart_id - a.return_cart_id)[0];
 
                             return (
                               <div
@@ -2422,7 +2564,7 @@ export default function App() {
                               </p>
                             ) : (
                               <>
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex flex-wrap items-center gap-1.5">
                                   {[1, 2, 3, 4, 5].map((star) => (
                                     <button
                                       key={star}
@@ -2436,18 +2578,19 @@ export default function App() {
                                       {star}★
                                     </button>
                                   ))}
-                                  <input
-                                    type="text"
+                                  <textarea
+                                    rows={3}
                                     value={commentInput}
                                     onChange={(e) => setCommentInput(e.target.value)}
                                     placeholder="Share delivery or packaging feedback..."
-                                    className="flex-1 bg-[#1b1e2e] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
+                                    className="w-full resize-y bg-[#1b1e2e] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
                                   />
                                   <button
                                     onClick={() => handleAddFeedback(ord.order_id)}
-                                    className="px-3 py-1.5 rounded-xl bg-[#9ece6a]/20 border border-[#9ece6a]/60 text-[#9ece6a] font-semibold"
+                                    disabled={!commentInput.trim()}
+                                    className="w-full px-4 py-2.5 rounded-xl bg-[#9ece6a]/20 border border-[#9ece6a]/60 text-[#9ece6a] font-semibold hover:bg-[#9ece6a]/30 disabled:opacity-40 disabled:cursor-not-allowed"
                                   >
-                                    Post
+                                    Submit Feedback
                                   </button>
                                 </div>
 
@@ -2482,6 +2625,57 @@ export default function App() {
         {/* ------------------------------------------------------------------ */}
         {activeView === 'admin' && (
           <div className="space-y-7">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-base font-extrabold italic text-white">Order Delivery Management</h3>
+                {useLiveApi && apiStatus === 'connected' && (
+                  <button
+                    onClick={() => fetchOrders().catch((err) => notify('error', 'Could Not Refresh Orders', err.message))}
+                    className="px-3 py-1.5 rounded-xl border border-[#7dcfff]/50 text-xs font-semibold text-[#7dcfff]"
+                  >Refresh Orders</button>
+                )}
+              </div>
+              {orders.length === 0 ? (
+                <p className="text-xs text-slate-400">No orders yet.</p>
+              ) : orders.map((ord) => {
+                const driver = deliveryPersons.find((person) => person.delivery_person_id === ord.delivery_person_id);
+                const invoice = invoices.find((item) => item.order_id === ord.order_id);
+                const paymentStatus = ord.payment_status || invoice?.payment_status;
+                const selectedDriver = selectedDriverByOrder[ord.order_id] || deliveryPersons[0]?.delivery_person_id;
+                return (
+                  <div key={ord.order_id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-[#24273a] border border-white/10 px-4 py-3 text-xs">
+                    <div>
+                      <div className="font-semibold text-white">Order #{ord.order_id} · Customer #{ord.customer_id}</div>
+                      <div className="text-slate-400">{ord.order_status} · {ord.delivery_status} · Payment: {paymentStatus || 'Unpaid'}</div>
+                      {driver && <div className="text-[#7dcfff]">Courier: {driver.name} ({driver.vehicle_no})</div>}
+                    </div>
+                    {!ord.delivery_person_id && ord.delivery_status !== 'Delivered' && (
+                      <div className="flex items-center gap-2">
+                        <select
+                          aria-label={`Courier for order ${ord.order_id}`}
+                          value={selectedDriver || ''}
+                          onChange={(event) => setSelectedDriverByOrder((prev) => ({ ...prev, [ord.order_id]: Number(event.target.value) }))}
+                          className="bg-[#1c1f2e] border border-white/10 rounded-xl px-3 py-2 text-white"
+                        >
+                          {deliveryPersons.map((person) => <option key={person.delivery_person_id} value={person.delivery_person_id}>{person.name} · {person.area_assigned}</option>)}
+                        </select>
+                        <button
+                          disabled={!selectedDriver || paymentStatus !== 'Paid'}
+                          onClick={() => handleAssignDriver(ord.order_id, selectedDriver)}
+                          className="px-3 py-2 rounded-xl border border-[#7dcfff] text-[#7dcfff] disabled:opacity-40"
+                        >Assign Courier</button>
+                      </div>
+                    )}
+                    {ord.delivery_person_id && ord.delivery_status !== 'Delivered' && (
+                      <button
+                        onClick={() => handleAdvanceDeliveryStep(ord.order_id)}
+                        className="px-3 py-2 rounded-xl border border-[#7dcfff] text-[#7dcfff]"
+                      >Advance to {DELIVERY_STEPS[DELIVERY_STEPS.indexOf(ord.delivery_status) + 1]}</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
               <div className="lg:col-span-5">
                 <ConcentricRadialWidget
@@ -2679,7 +2873,24 @@ export default function App() {
 
             {/* Returns & Refunds Queue */}
             <div className="space-y-3">
-              <h3 className="text-base font-extrabold italic text-white">Customer Return Requests & Refund Queue</h3>
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-base font-extrabold italic text-white">Customer Return Requests & Refund Queue</h3>
+                {useLiveApi && apiStatus === 'connected' && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        await fetchReturnQueue();
+                        notify('success', 'Return Queue Refreshed', 'Loaded pending requests from the database.');
+                      } catch (err) {
+                        notify('error', 'Could Not Refresh Returns', err.message);
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-xl border border-[#bb9af7]/50 text-xs font-semibold text-[#bb9af7] hover:bg-[#bb9af7]/10"
+                  >
+                    Refresh
+                  </button>
+                )}
+              </div>
               {returns.length === 0 ? (
                 <NeonPillRow
                   accent="purple"
@@ -2696,8 +2907,8 @@ export default function App() {
                       key={`${ret.cart_id}-${ret.serial_no}-${ret.return_cart_id}`}
                       accent="purple"
                       icon={RotateCcw}
-                      title={`${prod?.product_name || 'Item'} • Return #${ret.return_cart_id} (${ret.return_status})`}
-                      subtitle={`Reason: "${ret.reason}" • Line Value: ₹${line?.subtotal || 0}`}
+                      title={`${ret.product_name || prod?.product_name || 'Item'} • Return #${ret.return_cart_id}`}
+                      subtitle={`Cart #${ret.cart_id} • Serial #${ret.serial_no} • Reason: "${ret.reason}"`}
                       rightContent={
                         <div className="flex items-center gap-2">
                           {ret.return_status === 'Requested' && (
@@ -2717,12 +2928,41 @@ export default function App() {
                             </>
                           )}
                           {ret.return_status === 'Approved' && (
-                            <button
-                              onClick={() => handleCompleteRefund(ret.cart_id, ret.serial_no, ret.return_cart_id, 2)}
-                              className="px-3.5 py-1.5 rounded-xl bg-[#7dcfff]/20 border border-[#7dcfff] text-xs font-semibold text-[#7dcfff]"
-                            >
-                              Arrange Pickup & Issue ₹{line?.subtotal} Refund
-                            </button>
+                            <>
+                              {ret.delivery_person_id == null ? (
+                                <>
+                                  <select
+                                    aria-label={`Pickup courier for return ${ret.return_cart_id}`}
+                                    value={selectedDriverByReturn[`${ret.cart_id}-${ret.serial_no}-${ret.return_cart_id}`] || deliveryPersons[0]?.delivery_person_id || ''}
+                                    onChange={(event) => setSelectedDriverByReturn((prev) => ({
+                                      ...prev,
+                                      [`${ret.cart_id}-${ret.serial_no}-${ret.return_cart_id}`]: Number(event.target.value)
+                                    }))}
+                                    className="bg-[#1c1f2e] border border-white/10 rounded-xl px-3 py-2 text-white"
+                                  >
+                                    {deliveryPersons.map((person) => <option key={person.delivery_person_id} value={person.delivery_person_id}>{person.name} · {person.area_assigned}</option>)}
+                                  </select>
+                                  <button
+                                    disabled={deliveryPersons.length === 0}
+                                    onClick={() => handleAssignReturnDriver(
+                                      ret.cart_id, ret.serial_no, ret.return_cart_id,
+                                      selectedDriverByReturn[`${ret.cart_id}-${ret.serial_no}-${ret.return_cart_id}`] || deliveryPersons[0].delivery_person_id
+                                    )}
+                                    className="px-3.5 py-1.5 rounded-xl bg-[#7dcfff]/20 border border-[#7dcfff] text-xs font-semibold text-[#7dcfff] disabled:opacity-40"
+                                  >Assign Pickup Courier</button>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-xs text-[#7dcfff]">
+                                    Courier: {deliveryPersons.find((person) => person.delivery_person_id === ret.delivery_person_id)?.name || `#${ret.delivery_person_id}`}
+                                  </span>
+                                  <button
+                                    onClick={() => handleCompleteRefund(ret.cart_id, ret.serial_no, ret.return_cart_id, ret.delivery_person_id)}
+                                    className="px-3.5 py-1.5 rounded-xl bg-[#7dcfff]/20 border border-[#7dcfff] text-xs font-semibold text-[#7dcfff]"
+                                  >Issue Refund</button>
+                                </>
+                              )}
+                            </>
                           )}
                           {ret.return_status === 'Refunded' && (
                             <span className="text-xs font-mono text-[#9ece6a]">
