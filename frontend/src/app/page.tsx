@@ -1965,7 +1965,7 @@ export default function App() {
             </button>
             <div>
               <h1 className="text-xl font-extrabold italic tracking-wide text-white">
-                Indore <span className="text-[#7dcfff]">Bazaar</span>
+                Simrol <span className="text-[#7dcfff]">Bazaar</span>
               </h1>
               <p className="text-[11px] text-slate-400">
                 Let's shop and manage your orders seamlessly
