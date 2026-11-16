@@ -58,3 +58,5 @@ They also refuse anything out of order: editing a placed item, paying twice, ass
 ## Changing a rule
 
 Most numbers live in `sql/02_triggers.sql`: the tax rate (`0.18` in `trg_invoice_bi`), the return window (`10` in `trg_return_bi`) and the accepted return reasons (same trigger). Edit, then rerun `python setup_db.py`.
+
+## [Demo Link](https://drive.google.com/file/d/1JhHmT_0S-VsPTJitkRzaBsgnB3tpTW5f/view?usp=sharing)
